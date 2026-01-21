@@ -1,19 +1,12 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // ✅ Removed deprecated experimental.appDir
-  typescript: {
-    ignoreBuildErrors: false,
-  },
-  eslint: {
-    ignoreDuringBuilds: false,
-  },
-  images: {
-    domains: [],
-    unoptimized: true,
-  },
+  typescript: { ignoreBuildErrors: false },
+  eslint: { ignoreDuringBuilds: false },
+  images: { unoptimized: true },
   swcMinify: true,
-  webpack: (config, { isServer }) => {
-    // Handle audio files
+  // Increase static generation timeout
+  staticPageGenerationTimeout: 300, 
+  webpack: (config) => {
     config.module.rules.push({
       test: /\.(mp3|wav|ogg|m4a)$/,
       use: {
@@ -24,13 +17,7 @@ const nextConfig = {
         },
       },
     });
-
-    // Handle Python files
-    config.module.rules.push({
-      test: /\.py$/,
-      use: "raw-loader",
-    });
-
+    config.module.rules.push({ test: /\.py$/, use: "raw-loader" });
     return config;
   },
 };

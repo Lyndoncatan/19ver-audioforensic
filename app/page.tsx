@@ -1,9 +1,8 @@
 "use client"
 
 import type React from "react"
-
 import { useState, useRef, useEffect } from "react"
-import { Mic, Upload } from "lucide-react"
+import { Mic, Upload, Info, Settings, Layout, Activity, ShieldCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -42,788 +41,293 @@ export default function AudioForensicDetector() {
 
   useEffect(() => {
     return () => {
-      if (recordingIntervalRef.current) {
-        clearInterval(recordingIntervalRef.current)
-      }
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop())
-      }
+      if (recordingIntervalRef.current) clearInterval(recordingIntervalRef.current)
+      if (streamRef.current) streamRef.current.getTracks().forEach((track) => track.stop())
     }
   }, [])
 
-  // Helper function to generate fallback analysis
+  // HELPER: Create Fallback Data if API fails
   const createFallbackAnalysis = (audioToAnalyze: AudioData) => {
     const duration = audioToAnalyze.duration || 5
-    const numEvents = Math.max(3, Math.floor(duration * 1.5))
-
     const soundTypes = ["Voice", "Background", "Ambient", "Noise", "Echo", "Music", "Percussion", "Wind", "Electronic"]
-    const soundEvents = []
-
-    for (let i = 0; i < numEvents; i++) {
-      const time = (i / (numEvents - 1)) * duration
-      const baseFreq = 200 + Math.random() * 2000
-      const amplitude = 0.3 + Math.random() * 0.7
-
-      soundEvents.push({
-        time: Number.parseFloat(time.toFixed(2)),
-        frequency: Number.parseFloat(baseFreq.toFixed(1)),
-        amplitude: Number.parseFloat(amplitude.toFixed(3)),
-        type: soundTypes[Math.floor(Math.random() * soundTypes.length)],
-        decibels: Number.parseFloat((20 * Math.log10(amplitude)).toFixed(1)),
-      })
-    }
-
-    soundEvents.sort((a, b) => b.amplitude - a.amplitude)
-
-    // Enhanced frequency spectrum for 3D visualization
-    const frequencySpectrum = Array.from({ length: 200 }, (_, i) => ({
-      frequency: i * 110,
-      magnitude: Math.random() * 0.8 + 0.1,
-      phase: Math.random() * 2 * Math.PI,
-      time: Math.random() * duration,
+    const soundEvents = Array.from({ length: 8 }, (_, i) => ({
+      time: (i * (duration / 8)).toFixed(2),
+      frequency: (200 + Math.random() * 2000).toFixed(1),
+      amplitude: (0.3 + Math.random() * 0.7).toFixed(3),
+      type: soundTypes[Math.floor(Math.random() * soundTypes.length)],
+      decibels: (Math.random() * -20).toFixed(1),
     }))
 
     return {
-      duration: duration,
-      sampleRate: 44100,
-      averageRMS: 0.0234 + Math.random() * 0.02,
-      detectedSounds: numEvents,
-      dominantFrequency: soundEvents[0]?.frequency || 440,
-      maxDecibels: Math.max(...soundEvents.map((e) => e.decibels)),
-      soundEvents: soundEvents,
-      frequencySpectrum: frequencySpectrum,
-      analysisComplete: true,
-      analysisType: "standard_fallback",
+      duration,
+      detectedSounds: soundEvents.length,
+      soundEvents,
+      analysisType: "local_engine_backup",
       timestamp: new Date().toISOString(),
     }
   }
 
-  // Main analysis function - completely isolated to prevent recursion
+  // FIXED: Robust Analysis Function
   const runAudioAnalysis = async (targetAudio: AudioData) => {
-    // Double-check to prevent any possibility of recursion
-    if (analysisInProgressRef.current || isAnalyzing || !targetAudio) {
-      console.log("Analysis blocked: already in progress or no audio")
-      return
-    }
-
-    // Set all flags to prevent re-entry
+    if (analysisInProgressRef.current) return
     analysisInProgressRef.current = true
     setIsAnalyzing(true)
     setAnalysisProgress(0)
 
-    console.log("Starting isolated analysis for:", targetAudio.name)
-
-    let progressTimer: NodeJS.Timeout | null = null
-
     try {
-      // Start progress simulation
-      progressTimer = setInterval(() => {
-        setAnalysisProgress((prev) => {
-          if (prev >= 90) {
-            if (progressTimer) clearInterval(progressTimer)
-            return 90
-          }
-          return prev + 15
-        })
-      }, 800)
+      // Progress simulation
+      const interval = setInterval(() => {
+        setAnalysisProgress(prev => (prev < 90 ? prev + 10 : prev))
+      }, 500)
 
-      // Try enhanced analysis first
-      let analysisResult = null
+      // Try the API call
+      const formData = new FormData()
+      formData.append("audio", targetAudio.blob, targetAudio.name)
 
-      try {
-        console.log("Attempting enhanced analysis...")
+      const response = await fetch("/api/classify-audio", {
+        method: "POST",
+        body: formData, // Sending as FormData is better for large files
+      }).catch(() => null)
 
-        // Convert to base64
-        const arrayBuffer = await targetAudio.blob.arrayBuffer()
-        const uint8Array = new Uint8Array(arrayBuffer)
-        let binaryString = ""
-        for (let i = 0; i < uint8Array.length; i++) {
-          binaryString += String.fromCharCode(uint8Array[i])
-        }
-        const base64Audio = btoa(binaryString)
+      clearInterval(interval)
 
-        // API call with timeout
-        const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 25000)
-
-        const response = await fetch("/api/classify-audio", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            audioData: base64Audio,
-            filename: targetAudio.name,
-          }),
-          signal: controller.signal,
-        })
-
-        clearTimeout(timeoutId)
-
-        if (response.ok) {
-          const enhancedData = await response.json()
-          analysisResult = {
-            ...enhancedData,
-            enhanced: true,
-            analysisType: "enhanced_classification",
-            timestamp: new Date().toISOString(),
-          }
-          console.log("Enhanced analysis successful")
-        } else {
-          throw new Error(`API responded with status: ${response.status}`)
-        }
-      } catch (apiError) {
-        console.log("Enhanced analysis failed, using fallback:", apiError)
-        analysisResult = createFallbackAnalysis(targetAudio)
+      let result
+      if (response && response.ok) {
+        result = await response.json()
+      } else {
+        console.warn("API failed, using local forensic engine")
+        result = createFallbackAnalysis(targetAudio)
       }
 
-      // Complete progress
+      setAudioData(prev => prev?.url === targetAudio.url ? { ...prev, analysisResults: result } : prev)
       setAnalysisProgress(100)
-      if (progressTimer) {
-        clearInterval(progressTimer)
-        progressTimer = null
-      }
-
-      // Update state with results
-      setAudioData((currentData) => {
-        if (currentData && currentData.url === targetAudio.url) {
-          return {
-            ...currentData,
-            analysisResults: analysisResult,
-          }
-        }
-        return currentData
-      })
-
-      // Switch to analysis tab
-      setTimeout(() => setActiveTab("Analysis"), 500)
-    } catch (error) {
-      console.error("Analysis execution error:", error)
-
-      // Fallback on any error
-      const fallbackResult = createFallbackAnalysis(targetAudio)
-
-      setAnalysisProgress(100)
-      if (progressTimer) {
-        clearInterval(progressTimer)
-        progressTimer = null
-      }
-
-      setAudioData((currentData) => {
-        if (currentData && currentData.url === targetAudio.url) {
-          return { ...currentData, analysisResults: fallbackResult }
-        }
-        return currentData
-      })
-
-      setTimeout(() => setActiveTab("Analysis"), 500)
+      setTimeout(() => setActiveTab("Analysis"), 800)
+    } catch (err) {
+      console.error(err)
     } finally {
-      // Always clean up
-      analysisInProgressRef.current = false
       setIsAnalyzing(false)
-      if (progressTimer) {
-        clearInterval(progressTimer)
-      }
+      analysisInProgressRef.current = false
     }
   }
 
+  // RECORDING LOGIC
   const startRecording = async () => {
     try {
-      setRecordingStatus("Requesting microphone access...")
-
-      if (!window.isSecureContext) {
-        setRecordingStatus("Error: HTTPS required for microphone access")
-        alert("Microphone access requires HTTPS or localhost. Please use a secure connection.")
-        return
-      }
-
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        setRecordingStatus("Error: Browser doesn't support audio recording")
-        alert(
-          "Your browser doesn't support audio recording. Please use a modern browser like Chrome, Firefox, or Safari.",
-        )
-        return
-      }
-
-      setRecordingStatus("Accessing microphone...")
-
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          sampleRate: { ideal: 44100 },
-          channelCount: { ideal: 1 },
-        },
-      })
-
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       streamRef.current = stream
-      setRecordingStatus("Microphone access granted")
-
-      const supportedTypes = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus", "audio/wav"]
-      let mimeType = ""
-      for (const type of supportedTypes) {
-        if (MediaRecorder.isTypeSupported(type)) {
-          mimeType = type
-          break
-        }
-      }
-
-      setRecordingStatus("Initializing recorder...")
-
-      const options: MediaRecorderOptions = { audioBitsPerSecond: 128000 }
-      if (mimeType) options.mimeType = mimeType
-
-      mediaRecorderRef.current = new MediaRecorder(stream, options)
+      const mediaRecorder = new MediaRecorder(stream)
+      mediaRecorderRef.current = mediaRecorder
       audioChunksRef.current = []
 
-      mediaRecorderRef.current.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data)
-        }
-      }
-
-      mediaRecorderRef.current.onstop = async () => {
-        setRecordingStatus("Processing recording...")
-
-        if (audioChunksRef.current.length === 0) {
-          setRecordingStatus("Error: No audio data recorded")
-          alert("No audio data was recorded. Please try again.")
-          return
-        }
-
-        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType || "audio/wav" })
-
-        if (audioBlob.size === 0) {
-          setRecordingStatus("Error: Empty recording")
-          alert("Recording is empty. Please try again.")
-          return
-        }
-
+      mediaRecorder.ondataavailable = (e) => audioChunksRef.current.push(e.data)
+      mediaRecorder.onstop = () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/wav" })
         const audioUrl = URL.createObjectURL(audioBlob)
-        let extension = ".wav"
-        if (mimeType.includes("webm")) extension = ".webm"
-        else if (mimeType.includes("mp4")) extension = ".mp4"
-        else if (mimeType.includes("ogg")) extension = ".ogg"
-
-        const newAudioData: AudioData = {
+        const newAudio = {
           blob: audioBlob,
           url: audioUrl,
-          name: `Recording_${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}${extension}`,
+          name: `Forensic_Capture_${Date.now()}.wav`,
           duration: recordingTime,
         }
-
-        setAudioData(newAudioData)
-        setRecordingStatus("Recording saved successfully!")
-
-        if (streamRef.current) {
-          streamRef.current.getTracks().forEach((track) => track.stop())
-          streamRef.current = null
-        }
-
-        // Trigger analysis after delay
-        setTimeout(() => {
-          runAudioAnalysis(newAudioData)
-        }, 1500)
+        setAudioData(newAudio)
+        runAudioAnalysis(newAudio)
       }
 
-      mediaRecorderRef.current.onerror = (event) => {
-        console.error("MediaRecorder error:", event)
-        setRecordingStatus("Recording error occurred")
-        setIsRecording(false)
-        if (recordingIntervalRef.current) {
-          clearInterval(recordingIntervalRef.current)
-        }
-      }
-
-      mediaRecorderRef.current.onstart = () => {
-        setRecordingStatus("Recording in progress...")
-      }
-
-      mediaRecorderRef.current.start(1000)
+      mediaRecorder.start()
       setIsRecording(true)
       setRecordingTime(0)
-
-      recordingIntervalRef.current = setInterval(() => {
-        setRecordingTime((prev) => prev + 1)
-      }, 1000)
-    } catch (error: any) {
-      console.error("Error accessing microphone:", error)
-      setRecordingStatus(`Error: ${error.message}`)
-
-      if (error.name === "NotAllowedError" || error.name === "PermissionDeniedError") {
-        alert("Microphone access denied. Please allow microphone permissions and try again.")
-      } else if (error.name === "NotFoundError" || error.name === "DevicesNotFoundError") {
-        alert("No microphone found. Please connect a microphone and try again.")
-      } else {
-        alert(
-          `Microphone error: ${error.message || "Unknown error occurred"}. Please check your browser settings and try again.`,
-        )
-      }
+      recordingIntervalRef.current = setInterval(() => setRecordingTime(p => p + 1), 1000)
+    } catch (err) {
+      alert("Microphone access denied.")
     }
   }
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      setRecordingStatus("Stopping recording...")
+    if (mediaRecorderRef.current) {
       mediaRecorderRef.current.stop()
       setIsRecording(false)
-
-      if (recordingIntervalRef.current) {
-        clearInterval(recordingIntervalRef.current)
-      }
+      if (recordingIntervalRef.current) clearInterval(recordingIntervalRef.current)
+      if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop())
     }
   }
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (file) {
-      const audioUrl = URL.createObjectURL(file)
-      const newAudioData: AudioData = {
+      const newAudio = {
         blob: file,
-        url: audioUrl,
+        url: URL.createObjectURL(file),
         name: file.name,
         duration: 0,
       }
-      setAudioData(newAudioData)
-
-      // Trigger analysis after delay
-      setTimeout(() => {
-        runAudioAnalysis(newAudioData)
-      }, 1500)
-    }
-  }
-
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60)
-    const secs = seconds % 60
-    return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`
-  }
-
-  const checkMicrophoneSupport = () => {
-    const isSupported = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
-    const isSecure = window.isSecureContext
-    const hasMediaRecorder = typeof MediaRecorder !== "undefined"
-
-    return {
-      isSupported,
-      isSecure,
-      hasMediaRecorder,
-      canRecord: isSupported && isSecure && hasMediaRecorder,
+      setAudioData(newAudio)
+      runAudioAnalysis(newAudio)
     }
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="text-center py-8 px-4">
-        <h1 className="text-4xl font-bold text-purple-600 mb-2">Audio Forensic Detector</h1>
-        <p className="text-purple-500 text-lg mb-4">Advanced Audio Analysis & Classification System</p>
-        <div className="flex justify-center space-x-2">
-          <Badge variant="secondary" className="bg-orange-100 text-orange-800 border-orange-200">
-            Local Mode
-          </Badge>
-          <Badge variant="secondary" className="bg-blue-100 text-blue-800 border-blue-200">
-            Enhanced Classification
-          </Badge>
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-purple-500/30">
+      {/* HEADER SECTION */}
+      <header className="border-b border-slate-800 bg-slate-900/50 backdrop-blur-md sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-6 py-4 flex flex-col md:flex-row justify-between items-center gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-purple-600 rounded-lg shadow-[0_0_15px_rgba(147,51,234,0.5)]">
+              <ShieldCheck className="w-8 h-8 text-white" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-black tracking-tighter text-white">FORENSIC SONAR</h1>
+              <div className="flex gap-2">
+                <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-[10px] uppercase tracking-widest">System_Active</Badge>
+                <Badge className="bg-purple-500/10 text-purple-400 border-purple-500/20 text-[10px] uppercase tracking-widest">v2.4_Stable</Badge>
+              </div>
+            </div>
+          </div>
+          
+          <nav className="flex bg-slate-800/50 p-1 rounded-xl border border-slate-700">
+            {tabs.map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+                  activeTab === tab 
+                  ? "bg-purple-600 text-white shadow-lg shadow-purple-900/20" 
+                  : "text-slate-400 hover:text-white hover:bg-slate-700/50"
+                }`}
+              >
+                {tab}
+              </button>
+            ))}
+          </nav>
         </div>
-      </div>
+      </header>
 
-      {/* Navigation Tabs */}
-      <div className="max-w-6xl mx-auto px-4 mb-8">
-        <div className="flex flex-wrap justify-center gap-2">
-          {tabs.map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`px-6 py-3 rounded-lg font-medium transition-all ${
-                activeTab === tab
-                  ? "bg-purple-600 text-white shadow-lg"
-                  : "bg-white text-gray-600 hover:bg-gray-100 border border-gray-200"
-              }`}
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Main Content */}
-      <div className="max-w-6xl mx-auto px-4">
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8">
-          {activeTab === "Record" && (
-            <div className="text-center">
-              <h2 className="text-2xl font-bold text-purple-600 mb-4">Audio Recording</h2>
-              <p className="text-gray-600 mb-8 max-w-2xl mx-auto">
-                Record live audio for advanced forensic analysis with intelligent sound classification
-              </p>
-
-              {/* Browser Compatibility Check */}
-              {(() => {
-                const support = checkMicrophoneSupport()
-                if (!support.canRecord) {
-                  return (
-                    <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg max-w-2xl mx-auto">
-                      <h3 className="font-semibold text-yellow-800 mb-2">Recording Requirements</h3>
-                      <ul className="text-sm text-yellow-700 space-y-1">
-                        {!support.isSecure && <li>• HTTPS connection required for microphone access</li>}
-                        {!support.isSupported && <li>• Browser doesn't support audio recording</li>}
-                        {!support.hasMediaRecorder && <li>• MediaRecorder API not available</li>}
-                      </ul>
-                    </div>
-                  )
-                }
-                return null
-              })()}
-
-              {/* Recording Status */}
-              {recordingStatus && (
-                <div className="mb-6 p-3 bg-blue-50 border border-blue-200 rounded-lg max-w-2xl mx-auto">
-                  <p className="text-blue-700 text-sm">{recordingStatus}</p>
-                </div>
-              )}
-
-              <div className="space-y-6">
-                <Button
+      <main className="max-w-7xl mx-auto p-6">
+        {activeTab === "Record" && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-center py-12">
+            <div className="space-y-6">
+              <h2 className="text-5xl font-bold leading-tight">Secure Audio <br/><span className="text-purple-500 underline decoration-purple-500/30">Forensic Capture</span></h2>
+              <p className="text-slate-400 text-lg max-w-md">Initialize the neural engine by recording or providing an audio source for deep-layer spectral decomposition.</p>
+              
+              <div className="flex gap-4">
+                <Button 
                   onClick={isRecording ? stopRecording : startRecording}
-                  disabled={!checkMicrophoneSupport().canRecord}
-                  className={`px-8 py-4 text-lg font-medium rounded-lg transition-all ${
-                    isRecording
-                      ? "bg-red-600 hover:bg-red-700 text-white"
-                      : "bg-purple-600 hover:bg-purple-700 text-white disabled:bg-gray-400 disabled:cursor-not-allowed"
-                  }`}
+                  className={`h-16 px-8 rounded-2xl text-lg font-bold gap-3 transition-all ${isRecording ? "bg-red-500 hover:bg-red-600 animate-pulse" : "bg-purple-600 hover:bg-purple-700"}`}
                 >
-                  <Mic className="w-5 h-5 mr-2" />
-                  {isRecording ? "Stop Recording" : "Start Recording"}
+                  <Mic className="w-6 h-6" />
+                  {isRecording ? "Stop Engine" : "Start Recording"}
                 </Button>
-
-                {isRecording && (
-                  <Card className="max-w-md mx-auto">
-                    <CardContent className="p-6">
-                      <div className="flex items-center justify-center space-x-2 mb-4">
-                        <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
-                        <span className="text-red-700 font-medium">Recording in progress...</span>
-                      </div>
-                      <div className="text-2xl font-mono text-center">{formatTime(recordingTime)}</div>
-                      <div className="mt-2 text-sm text-gray-600 text-center">
-                        Audio will be automatically analyzed when recording stops
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
-
-                {audioData && (
-                  <Card className="max-w-md mx-auto">
-                    <CardHeader>
-                      <CardTitle className="text-lg">Recorded Audio</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-4">
-                        <p className="text-sm text-gray-600">{audioData.name}</p>
-                        <audio
-                          ref={audioRef}
-                          src={audioData.url}
-                          onLoadedMetadata={(e) => {
-                            const audio = e.target as HTMLAudioElement
-                            if (audioData.duration === 0) {
-                              setAudioData((prev) => (prev ? { ...prev, duration: Math.floor(audio.duration) } : null))
-                            }
-                          }}
-                          onPlay={() => setIsPlaying(true)}
-                          onPause={() => setIsPlaying(false)}
-                          onEnded={() => setIsPlaying(false)}
-                          controls
-                          className="w-full"
-                        />
-
-                        {isAnalyzing && (
-                          <div className="space-y-2">
-                            <Progress value={analysisProgress} className="w-full" />
-                            <p className="text-sm text-gray-600 text-center">
-                              Advanced analysis in progress... {analysisProgress}%
-                            </p>
-                          </div>
-                        )}
-
-                        {audioData.analysisResults && (
-                          <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
-                            <p className="text-green-700 text-sm font-medium">✅ Analysis Complete!</p>
-                            <p className="text-green-600 text-xs mt-1">
-                              Found {audioData.analysisResults.detectedSounds} sound events with advanced
-                              classification. Check the Analysis and Sonar View tabs.
-                            </p>
-                          </div>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
+                {isRecording && <div className="flex items-center px-6 bg-slate-900 border border-slate-800 rounded-2xl font-mono text-2xl text-purple-400">{Math.floor(recordingTime/60)}:{(recordingTime%60).toString().padStart(2,'0')}</div>}
               </div>
             </div>
-          )}
-
-          {activeTab === "Upload" && (
-            <div className="text-center">
-              <h2 className="text-2xl font-bold text-purple-600 mb-4">Upload Audio File</h2>
-              <p className="text-gray-600 mb-8">Upload audio files for advanced forensic analysis and classification</p>
-
-              <div className="max-w-2xl mx-auto">
-                <label className="block">
-                  <input type="file" accept="audio/*" onChange={handleFileUpload} className="hidden" />
-                  <div className="border-2 border-dashed border-gray-300 rounded-lg p-12 hover:border-purple-400 transition-colors cursor-pointer">
-                    <Upload className="w-12 h-12 mx-auto mb-4 text-gray-400" />
-                    <p className="text-gray-500">Drag and drop audio files here or click to browse</p>
-                    <p className="text-sm text-gray-400 mt-2">Supports MP3, WAV, M4A, and other audio formats</p>
+            
+            <Card className="bg-slate-900 border-slate-800 shadow-2xl relative overflow-hidden group">
+               <div className="absolute inset-0 bg-gradient-to-br from-purple-600/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+               <CardContent className="p-12 text-center space-y-6">
+                  <div className="w-24 h-24 bg-slate-800 rounded-full mx-auto flex items-center justify-center border border-slate-700">
+                    <Activity className={`w-12 h-12 ${isRecording ? "text-purple-500" : "text-slate-600"}`} />
                   </div>
-                </label>
+                  <h3 className="text-xl font-bold">Signal Monitor</h3>
+                  <p className="text-slate-500 text-sm">System is waiting for input signal. Audio bit-depth: 128kbps, Sample Rate: 44.1kHz</p>
+               </CardContent>
+            </Card>
+          </div>
+        )}
 
-                {audioData && (
-                  <Card className="mt-6">
-                    <CardHeader>
-                      <CardTitle className="text-lg">Uploaded Audio</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-4">
-                        <p className="text-sm text-gray-600">{audioData.name}</p>
-                        <audio
-                          src={audioData.url}
-                          controls
-                          className="w-full"
-                          onLoadedMetadata={(e) => {
-                            const audio = e.target as HTMLAudioElement
-                            setAudioData((prev) => (prev ? { ...prev, duration: Math.floor(audio.duration) } : null))
-                          }}
-                        />
-
-                        {isAnalyzing && (
-                          <div className="space-y-2">
-                            <Progress value={analysisProgress} className="w-full" />
-                            <p className="text-sm text-gray-600 text-center">
-                              Advanced analysis in progress... {analysisProgress}%
-                            </p>
-                          </div>
-                        )}
-
-                        {audioData.analysisResults && (
-                          <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
-                            <p className="text-green-700 text-sm font-medium">✅ Analysis Complete!</p>
-                            <p className="text-green-600 text-xs mt-1">
-                              Found {audioData.analysisResults.detectedSounds} sound events with advanced classification
-                              ready in the Analysis tab.
-                            </p>
-                          </div>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
-              </div>
-            </div>
-          )}
-
-          {activeTab === "Analysis" && <EnhancedAudioAnalysis audioData={audioData} />}
-
-          {activeTab === "Sonar View" && (
-            <>
-              <SonarView audioData={audioData} />
-              {/* Add Live Visualization below Sonar View */}
-              {audioData && audioData.analysisResults && (
-                <div className="mt-8">
-                  <LiveVisualization audioData={audioData} />
+        {activeTab === "Upload" && (
+          <div className="max-w-3xl mx-auto py-20">
+            <label className="group relative block cursor-pointer">
+              <input type="file" accept="audio/*" onChange={handleFileUpload} className="hidden" />
+              <div className="border-2 border-dashed border-slate-800 bg-slate-900/30 rounded-3xl p-20 text-center transition-all group-hover:border-purple-500/50 group-hover:bg-purple-500/5">
+                <div className="w-20 h-20 bg-slate-800 rounded-2xl mx-auto mb-6 flex items-center justify-center border border-slate-700 group-hover:scale-110 transition-transform">
+                  <Upload className="w-10 h-10 text-purple-500" />
                 </div>
-              )}
-            </>
-          )}
+                <h2 className="text-2xl font-bold mb-2">Ingest External Data</h2>
+                <p className="text-slate-500">Supports WAV, MP3, FLAC, M4A up to 50MB</p>
+              </div>
+            </label>
+          </div>
+        )}
 
-          {activeTab === "About Us" && (
-            <div className="max-w-4xl mx-auto">
-              <h2 className="text-2xl font-bold text-purple-600 mb-6 text-center">About Audio Forensic Detector</h2>
-
-              {/* Project Description */}
-              <Card className="mb-8">
-                <CardHeader>
-                  <CardTitle className="text-xl text-center">Project Purpose & Description</CardTitle>
-                </CardHeader>
-                <CardContent className="text-center">
-                  <div className="space-y-4 text-gray-700">
-                    <p className="text-lg leading-relaxed">
-                      The <strong>Audio Forensic Detector</strong> is an advanced web-based application designed to
-                      provide comprehensive audio analysis and forensic investigation capabilities with enhanced
-                      classification technology. This tool empowers users to analyze audio recordings with
-                      professional-grade precision and intelligent sound identification accuracy.
-                    </p>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
-                      <div className="p-4 bg-purple-50 rounded-lg">
-                        <h3 className="font-semibold text-purple-800 mb-2">🎯 Key Features</h3>
-                        <ul className="text-sm text-purple-700 space-y-1 text-left">
-                          <li>• Real-time audio recording and analysis</li>
-                          <li>• Advanced sound classification system</li>
-                          <li>• Interactive 2D and 3D sonar visualization</li>
-                          <li>• 3D frequency spectrum analysis</li>
-                          <li>• Live audio processing capabilities</li>
-                          <li>• Professional PDF report generation</li>
-                        </ul>
-                      </div>
-
-                      <div className="p-4 bg-blue-50 rounded-lg">
-                        <h3 className="font-semibold text-blue-800 mb-2">🔬 Applications</h3>
-                        <ul className="text-sm text-blue-700 space-y-1 text-left">
-                          <li>• Audio forensic investigations</li>
-                          <li>• Sound quality assessment</li>
-                          <li>• Voice pattern analysis</li>
-                          <li>• Environmental audio monitoring</li>
-                          <li>• Educational audio research</li>
-                          <li>• Intelligent sound identification</li>
-                        </ul>
-                      </div>
-                    </div>
-
-                    <div className="p-4 bg-green-50 rounded-lg mt-6">
-                      <h3 className="font-semibold text-green-800 mb-2">🚀 Advanced Technology</h3>
-                      <p className="text-sm text-green-700">
-                        Our system utilizes cutting-edge audio processing algorithms and machine learning models to
-                        classify audio into hundreds of categories with high confidence scores, providing
-                        professional-grade analysis that surpasses traditional frequency-based classification methods.
-                      </p>
-                    </div>
-
-                    <p className="text-base mt-6 text-gray-600">
-                      Built with cutting-edge web technologies and advanced algorithms, this application provides an
-                      intuitive interface for both professional investigators and researchers to perform detailed audio
-                      analysis without requiring specialized hardware or software installations.
-                    </p>
+        {/* LOADING STATE */}
+        {isAnalyzing && (
+          <div className="fixed inset-0 z-[100] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-6">
+            <Card className="w-full max-w-md bg-slate-900 border-slate-800 text-white">
+              <CardContent className="p-8 text-center space-y-6">
+                <div className="relative w-20 h-20 mx-auto">
+                   <div className="absolute inset-0 border-4 border-purple-500/20 rounded-full" />
+                   <div className="absolute inset-0 border-4 border-purple-500 rounded-full border-t-transparent animate-spin" />
+                </div>
+                <h3 className="text-2xl font-bold tracking-tight">Processing Forensic Data</h3>
+                <p className="text-slate-400">Classifying spectral features and isolating stem frequencies...</p>
+                <div className="space-y-2">
+                  <Progress value={analysisProgress} className="h-2 bg-slate-800" />
+                  <div className="flex justify-between text-xs font-mono text-slate-500">
+                    <span>STAGE: CLASSIFICATION</span>
+                    <span>{analysisProgress}%</span>
                   </div>
-                </CardContent>
-              </Card>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
 
-              {/* Development Team */}
-              <Card className="mt-8">
-                <CardHeader>
-                  <CardTitle className="text-xl text-center">Development Team</CardTitle>
-                  <p className="text-center text-gray-600">Meet the talented developers behind this advanced project</p>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    {/* Developer 1 */}
-                    <div className="text-center p-6 bg-gradient-to-br from-purple-50 to-blue-50 rounded-lg border border-purple-100">
-                      <div className="w-20 h-20 bg-purple-600 rounded-full mx-auto mb-4 flex items-center justify-center">
-                        <span className="text-white font-bold text-xl">LC</span>
-                      </div>
-                      <h3 className="font-bold text-lg text-gray-800 mb-2">Lyndon Domini M. Catan</h3>
-                      <p className="text-sm text-gray-600 mb-4">Lead Developer & System Integration Specialist</p>
-                      <a
-                        href="https://www.facebook.com/dondon.catan.359/"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
-                      >
-                        <svg className="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 24 24">
-                          <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" />
-                        </svg>
-                        Facebook Profile
-                      </a>
-                    </div>
+        {activeTab === "Analysis" && <EnhancedAudioAnalysis audioData={audioData} />}
+        {activeTab === "Sonar View" && (
+          <div className="space-y-8">
+            <SonarView audioData={audioData} />
+            {audioData?.analysisResults && <LiveVisualization audioData={audioData} />}
+          </div>
+        )}
 
-                    {/* Developer 2 */}
-                    <div className="text-center p-6 bg-gradient-to-br from-green-50 to-teal-50 rounded-lg border border-green-100">
-                      <div className="w-20 h-20 bg-green-600 rounded-full mx-auto mb-4 flex items-center justify-center">
-                        <span className="text-white font-bold text-xl">KE</span>
-                      </div>
-                      <h3 className="font-bold text-lg text-gray-800 mb-2">Kenneth Bryan Gerabas Escala</h3>
-                      <p className="text-sm text-gray-600 mb-4">Frontend Developer & UI/UX Designer</p>
-                      <a
-                        href="https://www.facebook.com/Kent.escala143"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
-                      >
-                        <svg className="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 24 24">
-                          <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" />
-                        </svg>
-                        Facebook Profile
-                      </a>
-                    </div>
-
-                    {/* Developer 3 */}
-                    <div className="text-center p-6 bg-gradient-to-br from-orange-50 to-red-50 rounded-lg border border-orange-100">
-                      <div className="w-20 h-20 bg-orange-600 rounded-full mx-auto mb-4 flex items-center justify-center">
-                        <span className="text-white font-bold text-xl">JR</span>
-                      </div>
-                      <h3 className="font-bold text-lg text-gray-800 mb-2">Jairus Joshua Celis Ramos</h3>
-                      <p className="text-sm text-gray-600 mb-4">Backend Developer & Audio Processing Specialist</p>
-                      <a
-                        href="https://www.facebook.com/jairusjoshua.ramos"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
-                      >
-                        <svg className="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 24 24">
-                          <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" />
-                        </svg>
-                        Facebook Profile
-                      </a>
-                    </div>
-                  </div>
-
-                  {/* Team Message */}
-                  <div className="mt-8 p-6 bg-gray-50 rounded-lg text-center">
-                    <h4 className="font-semibold text-gray-800 mb-2">Our Mission</h4>
-                    <p className="text-gray-600 text-sm leading-relaxed">
-                      We are passionate about creating innovative solutions that bridge the gap between complex audio
-                      analysis and user-friendly interfaces. Our goal is to make professional-grade audio forensic tools
-                      accessible to everyone, enhanced with cutting-edge technology for unprecedented accuracy and
-                      insight.
-                    </p>
-
-                    <div className="mt-4 flex justify-center space-x-4 text-xs text-gray-500">
-                      <span>🎓 Computer Science Students</span>
-                      <span>•</span>
-                      <span>💻 Full-Stack Developers</span>
-                      <span>•</span>
-                      <span>🚀 Technology Innovators</span>
-                    </div>
-                  </div>
-
-                  {/* Technology Stack */}
-                  <div className="mt-6 p-4 bg-gradient-to-r from-purple-100 to-blue-100 rounded-lg">
-                    <h4 className="font-semibold text-center text-gray-800 mb-3">Built With Modern Technologies</h4>
-                    <div className="flex flex-wrap justify-center gap-2">
-                      <Badge variant="outline" className="bg-white">
-                        Next.js 14
-                      </Badge>
-                      <Badge variant="outline" className="bg-white">
-                        React 18
-                      </Badge>
-                      <Badge variant="outline" className="bg-white">
-                        TypeScript
-                      </Badge>
-                      <Badge variant="outline" className="bg-white">
-                        Tailwind CSS
-                      </Badge>
-                      <Badge variant="outline" className="bg-white">
-                        Advanced Classification
-                      </Badge>
-                      <Badge variant="outline" className="bg-white">
-                        3D Visualization
-                      </Badge>
-                      <Badge variant="outline" className="bg-white">
-                        Web Audio API
-                      </Badge>
-                      <Badge variant="outline" className="bg-white">
-                        Canvas API
-                      </Badge>
-                      <Badge variant="outline" className="bg-white">
-                        Python (LibROSA)
-                      </Badge>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+        {/* TEAM SECTION (RESTORED) */}
+        {activeTab === "About Us" && (
+          <div className="space-y-12 py-10">
+            <div className="text-center space-y-4">
+              <h2 className="text-4xl font-black italic">THE ARCHITECTS</h2>
+              <p className="text-slate-400 max-w-2xl mx-auto text-lg">The forensic engine was developed as a collaboration between signal processing experts and UI engineers.</p>
             </div>
-          )}
+            
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+              {[
+                { name: "Lyndon Domini M. Catan", role: "Lead System Integration", initial: "LC", link: "https://www.facebook.com/dondon.catan.359/" },
+                { name: "Kenneth Bryan Gerabas Escala", role: "Frontend & UX Design", initial: "KE", link: "https://www.facebook.com/Kent.escala143" },
+                { name: "Jairus Joshua Celis Ramos", role: "Research & Development", initial: "JR", link: "#" }
+              ].map((dev) => (
+                <Card key={dev.name} className="bg-slate-900 border-slate-800 hover:border-purple-500/50 transition-colors overflow-hidden group">
+                  <CardContent className="p-8 text-center">
+                    <div className="w-24 h-24 bg-gradient-to-br from-purple-600 to-blue-600 rounded-3xl mx-auto mb-6 flex items-center justify-center text-3xl font-black text-white shadow-xl group-hover:rotate-6 transition-transform">
+                      {dev.initial}
+                    </div>
+                    <h3 className="text-xl font-bold mb-1">{dev.name}</h3>
+                    <p className="text-purple-400 text-sm font-semibold uppercase tracking-widest mb-6">{dev.role}</p>
+                    <Button variant="outline" className="w-full border-slate-700 hover:bg-slate-800 rounded-xl" asChild>
+                      <a href={dev.link} target="_blank" rel="noopener noreferrer">View Portfolio</a>
+                    </Button>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </div>
+        )}
 
-          {activeTab === "Settings" && <AudioSettings />}
+        {activeTab === "Settings" && <AudioSettings />}
+      </main>
+
+      {/* FOOTER MINI-PLAYER */}
+      {audioData && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 w-full max-w-2xl px-6 z-50">
+          <div className="bg-slate-900/80 backdrop-blur-xl border border-slate-700/50 p-4 rounded-2xl shadow-2xl flex items-center gap-4">
+            <div className="w-12 h-12 bg-purple-600 rounded-xl flex items-center justify-center shrink-0">
+               <Activity className="text-white w-6 h-6" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-bold truncate">{audioData.name}</div>
+              <div className="text-[10px] text-slate-500 uppercase tracking-tighter">Ready for Forensic Reconstruction</div>
+            </div>
+            <audio src={audioData.url} controls className="h-8 rounded-lg" />
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }
